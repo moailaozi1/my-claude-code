@@ -48,6 +48,91 @@ https://github.com/owner/repo
 - 值得关注的点
 ```
 
+### 实现规划（v1 脚本版）
+
+第一版按**独立本地 Node 脚本**实现，不做 VS Code 扩展集成。目标是先把“可运行、可定时、可重跑、失败可见”的主流程跑通。
+
+#### 架构
+
+- 本地 Node 脚本负责拉取 archive、解析数据、生成摘要、更新 Markdown
+- 本地系统调度器负责每天 12:00 触发执行
+- 不依赖远程调度，不把 Claude Code 当作唯一自动执行层
+
+#### 建议目录
+
+```text
+scripts/github_trend/
+├── run_daily.mjs
+├── config.mjs
+├── fetch_archive.mjs
+├── parse_archive.mjs
+├── summarize.mjs
+├── render_markdown.mjs
+├── upsert_obsidian.mjs
+├── lib/
+│   └── date.mjs
+└── fixtures/
+```
+
+#### 核心流程
+
+1. 调度器运行 `node scripts/github_trend/run_daily.mjs`
+2. 默认计算前一天日期，也支持 `--date YYYY-MM-DD`
+3. 从第三方 archive 拉取目标日期榜单
+4. 解析为统一结构：`owner`、`repo`、`url`、`description`、`language`、`stars`、`rank`
+5. 生成简洁的趋势总结和项目摘要
+6. 渲染为 Markdown 区块
+7. 幂等写入 Obsidian 的 `daily/github_trend.md`
+
+#### 配置
+
+建议先使用环境变量：
+
+- `TRENDING_ARCHIVE_URL_TEMPLATE`
+- `OBSIDIAN_VAULT_PATH`
+- `GITHUB_TREND_NOTE_PATH`（默认 `daily/github_trend.md`）
+- `TOP_N`（默认 10）
+- `REQUEST_TIMEOUT_MS`
+- `LOG_LEVEL`
+
+#### 幂等写入策略
+
+为避免误伤手工内容，使用托管块标记而不是只靠标题匹配：
+
+```md
+<!-- github-trend:2026-03-26:start -->
+## 2026-03-26
+...
+<!-- github-trend:2026-03-26:end -->
+```
+
+同一天重跑时：
+- 如果块已存在，则替换该块
+- 如果内容完全一致，则不写文件
+- 如果文件不存在，则新建
+- 文件中的其他手工内容保持不变
+
+#### 失败处理
+
+- 抓取失败：不修改现有笔记，直接报错退出
+- 解析失败：保留原始响应，提示数据格式异常
+- 写入失败：保留中间结果，不覆盖已有成功内容
+- 支持 `--dry-run`，便于先验证输出再落盘
+
+#### 验证思路
+
+- 用固定 fixture 验证 archive 解析
+- 用固定输入验证 Markdown 渲染结果
+- 验证 upsert 场景：创建、追加、替换、相同内容 no-op、保留手工内容
+- 在本地手动运行通过后，再接入系统定时任务
+
+#### 后续扩展
+
+- 增加 README 首段抓取，提升摘要质量
+- 支持补跑指定日期
+- 支持多输出目标（固定文件 / Obsidian Daily Note 区块）
+- 后续迁移到自有快照采集，降低对第三方 archive 的依赖
+
 ### 后续可扩展方向
 
 - 增加原始榜单缓存，支持重跑
